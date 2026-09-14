@@ -11,7 +11,7 @@
 #     并对内核驱动名做 strcmp。含 Panthor 后端的产物 .rodata 必出现独立 "panthor"。
 #   * panthor_kmod.c 的错误串（"panthor_kmod ...", "drm_panthor_..."）在 .rodata。
 #   * 未 strip 时符号表含 panthor_kmod_ops / panthor_kmod_dev_create 等。
-#   * DRM_IOCTL_PANTHOR_* 通过 libdrm 的 drmIoctl 发出 => DT_NEEDED 必有 libdrm.so.2。
+#   * DRM_IOCTL_PANTHOR_* 通过 libdrm 的 drmIoctl 发出 => DT_NEEDED 必有 libdrm.so（android 无版本）。
 #   * -Dllvm=disabled => 绝不应出现 libLLVM*。宿主 glibc 库也不应出现。
 #
 # 用法：scripts/40-verify-panthor.sh [prebuilts_arm64_dir]
@@ -34,10 +34,13 @@ wrn()  { WARN=$((WARN+1)); printf '  \033[1;33mWARN\033[0m %s\n' "$*"; }
 DRI="$DST/lib/dri/libgallium_dri.so"
 VK="$DST/lib/hw/libvulkan_panfrost.so"
 EGL="$(ls "$DST"/lib/egl/libEGL_mesa.so* 2>/dev/null | head -1)"
+# android(SDK>=30) 下 gbm 名为 libgbm_mesa.so*；libdrm 为无版本 libdrm.so。用通配解析实际文件，勿写死。
+GBM="$(ls "$DST"/lib/libgbm*.so* 2>/dev/null | head -1)"
+LIBDRM="$(ls "$DST"/lib/libdrm.so* 2>/dev/null | head -1)"
 
 echo "==================== 1. 产物存在性 ===================="
-for f in "$DRI" "$VK" "$EGL" "$DST/lib/libgbm.so.1" "$DST/lib/libdrm.so.2"; do
-  if [ -e "$f" ]; then ok "存在 $(basename "$f")"; else bad "缺失 $f"; fi
+for f in "$DRI" "$VK" "$EGL" "$GBM" "$LIBDRM"; do
+  if [ -n "$f" ] && [ -e "$f" ]; then ok "存在 $(basename "$f")"; else bad "缺失产物：${f:-（EGL/GBM/libdrm 通配未匹配到）}"; fi
 done
 [ -e "$DST/lib/dri/panfrost_dri.so" ] && ok "存在 panfrost_dri.so（gallium 驱动软链）" \
   || bad "缺 panfrost_dri.so 软链（Android.mk 靠 find -type l 识别）"
@@ -55,7 +58,7 @@ check_elf() {
   case "$mach"  in *AARCH64*|*aarch64*) ok "$name: Machine=AArch64";; *) bad "$name: Machine=$mach（应 AArch64，疑似宿主架构泄漏）";; esac
   case "$typ"   in *DYN*) ok "$name: Type=DYN(共享对象)";; *) wrn "$name: Type=$typ";; esac
 }
-check_elf "$DRI"; check_elf "$VK"; check_elf "$EGL"; check_elf "$DST/lib/libgbm.so.1"
+check_elf "$DRI"; check_elf "$VK"; check_elf "$EGL"; check_elf "$GBM"
 
 echo "==================== 3. Panthor KMD（清单 6.2 line270 核心）===================="
 check_panthor() {
@@ -103,10 +106,10 @@ check_needed() {
 check_needed "$DRI"; check_needed "$VK"; check_needed "$EGL"
 
 echo "==================== 5. GBM 导出符号（gralloc.gbm 需要）===================="
-if [ -e "$DST/lib/libgbm.so.1" ]; then
+if [ -n "$GBM" ] && [ -e "$GBM" ]; then
   for sym in gbm_create_device gbm_bo_create gbm_bo_get_fd gbm_surface_create; do
-    readelf -sW "$DST/lib/libgbm.so.1" 2>/dev/null | grep -q "$sym" \
-      && ok "libgbm 导出 $sym" || wrn "libgbm 未见 $sym（可能版本差异/已 strip）"
+    readelf -sW "$GBM" 2>/dev/null | grep -q "$sym" \
+      && ok "$(basename "$GBM") 导出 $sym" || wrn "$(basename "$GBM") 未见 $sym（可能版本差异/已 strip）"
   done
 fi
 

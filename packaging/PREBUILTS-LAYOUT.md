@@ -19,9 +19,9 @@ prebuilts/arm64/
 │   │   └── kmsro_dri.so     -> libgallium_dri.so   (软链，若 mesa 生成)
 │   ├── hw/
 │   │   └── libvulkan_panfrost.so     <- PanVK（-Dvulkan-drivers=panfrost）
-│   ├── libgbm.so.1 (.0.0)            <- Mesa: -Dgbm=enabled
-│   ├── libglapi.so.0 (.0.0)          <- Mesa 共享 glapi
-│   ├── libdrm.so.2 (.x.y)            <- 10-build-libdrm.sh 交叉构建
+│   ├── libgbm_mesa.so.1 (.0.0)       <- Mesa: -Dgbm=enabled（android SDK>=30：名带 _mesa 后缀）
+│   ├── libglapi.so.0 (.0.0)          <- Mesa glapi（若独立成 .so；本配置多并入 libgallium_dri）
+│   ├── libdrm.so (无版本)            <- 10-build-libdrm.sh 交叉构建（android 约定 SONAME=libdrm.so）
 │   └── libc++_shared.so              <- NDK 提供
 └── share/vulkan/icd.d/
     └── panfrost_icd.*.json           <- 可选（Android 主要靠 ro.hardware.vulkan=panfrost）
@@ -37,7 +37,7 @@ prebuilts/arm64/
 | `libEGL_mesa` / `libGLESv1_CM_mesa` / `libGLESv2_mesa` | `lib/egl/*.so` | `/vendor/lib64/egl/` | **本脚手架(Mesa)** |
 | `libgallium_dri` (+ `*_dri.so` 软链) | `lib/dri/libgallium_dri.so` | `/vendor/lib64/dri/` | **本脚手架(Mesa)** |
 | `vulkan.panfrost` | `lib/hw/libvulkan_panfrost.so` | `/vendor/lib64/hw/` | **本脚手架(PanVK)** |
-| `libgbm.so.1` / `libglapi.so.0` / `libdrm*.so.*` | `lib/*.so.*` | `/vendor/lib64/` | **本脚手架(Mesa/libdrm)** |
+| `libgbm_mesa`(libgbm_mesa.so.1) / `libdrm`(libdrm.so，无版本) | `lib/libgbm*.so*`、`lib/libdrm.so*` | `/vendor/lib64/` | **本脚手架(Mesa/libdrm)** |
 | `libc++_shared_p` | `lib/libc++_shared.so` | `/vendor/lib64/` | NDK |
 | `gralloc.gbm` | `lib/hw/gralloc.gbm.so` | `/vendor/lib64/hw/` | **reDroid 上游，非 Mesa** |
 | `gralloc.cros` | `lib/hw/gralloc.cros.so` | `/vendor/lib64/hw/` | reDroid 上游，非 Mesa |

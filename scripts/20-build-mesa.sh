@@ -107,10 +107,15 @@ rm -rf "$STAGE"
 DESTDIR="$STAGE" ninja -C "$BUILD" install
 
 # ---- 产物存在性快检（详细校验在 40-verify-panthor.sh）----
+# 依据 Mesa 26.3(commit 25b4dfa) 源码核对，Android 下产物名/位置与桌面不同，勿写死：
+#   * gbm：platform-sdk-version>=30 => 名为 libgbm_mesa.so.1.0.0（src/gbm/meson.build:20）
+#   * libgallium_dri.so：无版本，shared_library 无 install_dir => 落在 $libdir 根（非 $libdir/dri）
+#     （src/gallium/targets/dri/meson.build:36-69；dri-drivers-path 仅用于 summary 显示）
+#   * libEGL_mesa/libGLESv2_mesa/libvulkan_panfrost：均在 $libdir 根（egl-lib-suffix/gles-lib-suffix）
 STAGE_LIB="$STAGE$PREFIX/$LIBDIR"
-expect_present() { [ -e "$1" ] || die "预期产物缺失：$1"; }
-expect_present "$STAGE_LIB/dri/libgallium_dri.so"
-expect_present "$STAGE_LIB/libgbm.so.1"
+expect_found() { find "$1" -name "$2" 2>/dev/null | grep -q . || die "预期产物缺失：$2（$3）"; }
+expect_found "$STAGE"     'libgallium_dri.so' "gallium megadriver 未构建"
+expect_found "$STAGE_LIB" 'libgbm*.so*'       "GBM 未构建（android 名应为 libgbm_mesa.so*）"
 ls "$STAGE_LIB"/libEGL_mesa.so*        >/dev/null 2>&1 || die "缺 libEGL_mesa.so（egl-lib-suffix 未生效？）"
 ls "$STAGE_LIB"/libGLESv2_mesa.so*     >/dev/null 2>&1 || die "缺 libGLESv2_mesa.so"
 ls "$STAGE_LIB"/libvulkan_panfrost.so* >/dev/null 2>&1 || die "缺 libvulkan_panfrost.so（PanVK 未构建？）"

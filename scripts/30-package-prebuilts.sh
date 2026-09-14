@@ -7,7 +7,7 @@
 #     lib/egl/libEGL_mesa.so  libGLESv1_CM_mesa.so  libGLESv2_mesa.so
 #     lib/dri/libgallium_dri.so  +  panfrost_dri.so/kmsro_dri.so(->libgallium_dri.so 软链)
 #     lib/hw/libvulkan_panfrost.so
-#     lib/libgbm.so.1(.0.0)  libglapi.so.0(.0.0)  libdrm.so.2(.x.y)  libc++_shared.so
+#     lib/libgbm_mesa.so.1(.0.0)  libdrm.so(无版本)  libc++_shared.so  [glapi 已并入 libgallium_dri]
 #     share/vulkan/icd.d/panfrost_icd.*.json   (可选)
 #
 # 注意（对应清单 6.3）：
@@ -61,10 +61,17 @@ copy_libs "$STAGE_LIB" 'libGLESv1_CM_mesa.so*'  "$DST/lib/egl"
 copy_libs "$STAGE_LIB" 'libGLESv2_mesa.so*'     "$DST/lib/egl"
 
 # ---- Gallium megadriver + 每驱动软链 -> lib/dri/ ----
+# Android 下 libgallium_dri.so 无版本、装在 $libdir 根（不在 $libdir/dri），且 Mesa 26.3 的
+# gallium dri target 不再自动铺 panfrost_dri.so 软链，故用 find 定位后自建软链。
 log "  Gallium DRI -> lib/dri/"
-copy_libs "$STAGE_LIB/dri" 'libgallium_dri.so'  "$DST/lib/dri"
-copy_libs "$STAGE_LIB/dri" '*_dri.so'           "$DST/lib/dri"   # panfrost_dri.so/kmsro_dri.so 软链
-# 兜底：若 mesa 未生成 panfrost_dri.so 软链，这里补一个（Android.mk 靠它 find -type l）
+GALLIUM_DRI_SRC="$(find "$STAGE" -name 'libgallium_dri.so' 2>/dev/null | head -1)"
+if [ -n "$GALLIUM_DRI_SRC" ]; then
+  cp -a "$GALLIUM_DRI_SRC" "$DST/lib/dri/libgallium_dri.so"; maybe_strip "$DST/lib/dri/libgallium_dri.so"
+  copy_libs "$STAGE_LIB/dri" '*_dri.so' "$DST/lib/dri"   # 若 mesa 另生成了 *_dri.so 软链则一并保留
+else
+  log "  警告：未找到 libgallium_dri.so（gallium 驱动未构建？）"
+fi
+# 兜底：确保 panfrost_dri.so 软链存在（device_redroid-prebuilts 的 Android.mk 靠 find -type l 识别驱动）
 [ -e "$DST/lib/dri/panfrost_dri.so" ] || ln -sf libgallium_dri.so "$DST/lib/dri/panfrost_dri.so"
 
 # ---- PanVK -> lib/hw/libvulkan_panfrost.so ----
@@ -73,8 +80,8 @@ copy_libs "$STAGE_LIB" 'libvulkan_panfrost.so*' "$DST/lib/hw"
 
 # ---- GBM / glapi -> lib/ ----
 log "  GBM/glapi -> lib/"
-copy_libs "$STAGE_LIB" 'libgbm.so*'    "$DST/lib"
-copy_libs "$STAGE_LIB" 'libglapi.so*'  "$DST/lib"
+copy_libs "$STAGE_LIB" 'libgbm*.so*'   "$DST/lib"   # android(SDK>=30) 名为 libgbm_mesa.so.1.0.0
+copy_libs "$STAGE_LIB" 'libglapi.so*'  "$DST/lib"   # glapi 通常并入 libgallium_dri，无独立 .so 时为空，无妨
 
 # ---- libdrm（我们在 10-build-libdrm.sh 装进 $SHIM）-> lib/ ----
 log "  libdrm -> lib/"

@@ -3,7 +3,7 @@
 # 10-build-libdrm.sh —— 用 NDK cross-file 交叉构建 libdrm，安装进垫片 sysroot
 # =============================================================================
 # 产物（装入 $SHIM）：
-#   $SHIM/lib/libdrm.so.2.x.y (+ libdrm.so.2 / libdrm.so 软链)
+#   $SHIM/lib/libdrm.so   <- Android 无版本 .so（SONAME=libdrm.so，见文件末校验说明）
 #   $SHIM/lib/pkgconfig/libdrm.pc      <- Mesa 的 dependency('libdrm') 靠它
 #   $SHIM/include/{xf86drm.h,drm.h,drm_mode.h,...}
 #
@@ -65,16 +65,24 @@ log "编译 + 安装 libdrm 到 $SHIM"
 ninja -C "$BUILD"
 ninja -C "$BUILD" install
 
-# 校验：libdrm.so.2 与 libdrm.pc 必须就位，否则 Mesa 配置阶段会找不到 libdrm
-[ -e "$SHIM/lib/libdrm.so.2" ] || die "libdrm.so.2 未安装到 $SHIM/lib"
-[ -f "$SHIM_PC/libdrm.pc" ]     || die "libdrm.pc 未生成到 $SHIM_PC"
-log "  libdrm 就绪：$(readlink -f "$SHIM/lib/libdrm.so.2")"
+# 解析实际安装的 libdrm 共享库名：
+#   Android(NDK clang 预定义 __ANDROID__)下 libdrm 上游故意构建“无版本”的 libdrm.so
+#   （SONAME=libdrm.so，符合 AOSP 约定；见 libdrm meson.build:54 android=cc.compiles(__ANDROID__)
+#    与 :267 "Build an unversioned so on android"）。非 Android 才是 libdrm.so.2.4.0 + 软链。
+#   故按实际存在者取，不写死 .so.2（run #3 正是死写 libdrm.so.2 才误报失败）。
+LIBDRM_SO=""
+for cand in libdrm.so libdrm.so.2; do
+  [ -e "$SHIM/lib/$cand" ] && { LIBDRM_SO="$SHIM/lib/$cand"; break; }
+done
+[ -n "$LIBDRM_SO" ]         || die "libdrm.so(.2) 未安装到 $SHIM/lib"
+[ -f "$SHIM_PC/libdrm.pc" ] || die "libdrm.pc 未生成到 $SHIM_PC"
+log "  libdrm 就绪：$(readlink -f "$LIBDRM_SO")"
 log "  libdrm.pc : $(grep -m1 '^Version:' "$SHIM_PC/libdrm.pc")"
 
 # 交叉产物 ABI 快检：必须是 AArch64 / ELF64，绝不能是宿主 x86-64
 if command -v readelf >/dev/null 2>&1; then
-  machine="$(readelf -h "$SHIM/lib/libdrm.so.2" | awk -F: '/Machine:/{gsub(/^ +/,"",$2);print $2}')"
-  log "  libdrm.so.2 Machine = $machine"
+  machine="$(readelf -h "$LIBDRM_SO" | awk -F: '/Machine:/{gsub(/^ +/,"",$2);print $2}')"
+  log "  $(basename "$LIBDRM_SO") Machine = $machine"
   case "$machine" in *AARCH64*|*aarch64*) : ;; *) die "libdrm 不是 arm64（Machine=$machine），cross-file 有误";; esac
 fi
 
