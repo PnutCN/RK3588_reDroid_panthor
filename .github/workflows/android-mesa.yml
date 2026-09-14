@@ -1,0 +1,152 @@
+name: android-mesa-panthor-build
+
+# =============================================================================
+# 交叉构建 Android arm64 Mesa(Panfrost gallium + PanVK + GBM + EGL/GLES) + libdrm，
+# 落位成 device_redroid-prebuilts 布局，并校验确含 Panthor KMD。
+#
+# 关键点：这是 NDK 交叉编译（x86_64 host -> aarch64-linux-android），
+#         **不需要 arm64 runner、不需要 qemu 模拟**，普通 ubuntu-latest 即可，快。
+#         GH runner 自带 Android NDK（$ANDROID_NDK_LATEST_HOME），无需下载。
+#
+# 本仓库即 android-mesa 独立脚手架仓库：脚手架内容位于仓库根，故 env.SCAFFOLD_DIR='.'；
+# 本 workflow 已置于生效位置 .github/workflows/，push 到 main 或手动 Run workflow 即触发。
+#
+# 每次运行都发布 public Release（成功->产物+校验报告+日志；失败->至少 build.log），
+# 与 opi5max.yml 一致，便于无仓库权限时取回结果。
+# =============================================================================
+
+on:
+  workflow_dispatch:
+    inputs:
+      route:
+        description: '构建路线：full=生产(android platform+AOSP垫片)；smoke=工具链冒烟(android-stub)'
+        required: true
+        default: 'full'
+        type: choice
+        options:
+          - full
+          - smoke
+      gallium_drivers:
+        description: 'gallium 驱动（逗号分隔）'
+        required: false
+        default: 'panfrost'
+      vulkan_drivers:
+        description: 'vulkan 驱动（panfrost=PanVK）'
+        required: false
+        default: 'panfrost'
+  push:
+    branches:
+      - main
+    paths:
+      - 'scripts/**'
+      - 'cross/**'
+      - 'packaging/**'
+      - 'VERSIONS.env'
+      - '.github/workflows/android-mesa.yml'
+
+permissions:
+  contents: write   # 发布 Release
+
+env:
+  SCAFFOLD_DIR: .
+
+jobs:
+  build:
+    name: Android arm64 Mesa + PanVK + GBM (Panthor)
+    runs-on: ubuntu-latest          # x86_64；NDK 交叉编译，无需 arm runner
+    timeout-minutes: 180
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build tools (meson/ninja/mako/ccache)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            meson ninja-build pkg-config python3-mako python3-pip ccache unzip xz-utils
+          meson --version; ninja --version
+
+      - name: Locate NDK (runner 预装)
+        run: |
+          echo "ANDROID_NDK_LATEST_HOME=$ANDROID_NDK_LATEST_HOME"
+          echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME"
+          # 选一个存在的导出给后续步骤
+          if [ -d "${ANDROID_NDK_LATEST_HOME:-}" ]; then echo "NDK=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
+          elif [ -d "${ANDROID_NDK_HOME:-}" ]; then echo "NDK=$ANDROID_NDK_HOME" >> "$GITHUB_ENV"
+          else echo "未找到预装 NDK，脚本将按 VERSIONS.env 下载"; fi
+
+      - name: Build (cross-compile Mesa + libdrm for android/arm64)
+        env:
+          ANDROID_STUB: ${{ github.event.inputs.route == 'smoke' && '1' || '0' }}
+          GALLIUM_DRIVERS: ${{ github.event.inputs.gallium_drivers || 'panfrost' }}
+          VULKAN_DRIVERS: ${{ github.event.inputs.vulkan_drivers || 'panfrost' }}
+          WORK: ${{ github.workspace }}/work
+        run: |
+          set -o pipefail
+          cd "$SCAFFOLD_DIR"
+          chmod +x scripts/*.sh
+          ./scripts/build-all.sh 2>&1 | tee "$WORK/build.log"
+
+      - name: Verify Panthor KMD / ABI / deps (清单 6.2 line270)
+        if: always()
+        env:
+          WORK: ${{ github.workspace }}/work
+        run: |
+          cd "$SCAFFOLD_DIR"
+          ./scripts/40-verify-panthor.sh 2>&1 | tee "$WORK/verify-panthor.txt" || true
+
+      - name: Summarize
+        if: always()
+        env:
+          WORK: ${{ github.workspace }}/work
+        run: |
+          echo "===== prebuilts 布局 ====="
+          find "$WORK/out" -maxdepth 4 \( -type f -o -type l \) -printf '%p\n' 2>/dev/null | sort || true
+          echo "===== PACKAGE-INFO ====="; cat "$WORK"/out/prebuilts/*/PACKAGE-INFO.txt 2>/dev/null || true
+          echo "===== verify (tail) ====="; tail -40 "$WORK/verify-panthor.txt" 2>/dev/null || true
+          echo "===== build.log (tail) ====="; tail -60 "$WORK/build.log" 2>/dev/null || true
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-mesa-panthor-prebuilts
+          path: |
+            ${{ github.workspace }}/work/out/prebuilts/**
+            ${{ github.workspace }}/work/verify-panthor.txt
+            ${{ github.workspace }}/work/build.log
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Pack prebuilts tarball (for Release)
+        if: always()
+        env:
+          WORK: ${{ github.workspace }}/work
+        run: |
+          cd "$WORK/out" 2>/dev/null || { echo "无产物可打包"; exit 0; }
+          tar -czf "$WORK/android-mesa-panthor-prebuilts.tar.gz" prebuilts 2>/dev/null || true
+          ls -lh "$WORK/android-mesa-panthor-prebuilts.tar.gz" 2>/dev/null || true
+
+      - name: Publish Release (public, retrievable without auth)
+        if: always()
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: android-mesa-panthor-${{ github.run_number }}
+          name: Android Mesa+PanVK+GBM (Panthor) run ${{ github.run_number }}.${{ github.run_attempt }}
+          body: |
+            Android arm64 Mesa(Panfrost gallium + PanVK + GBM + EGL/GLES) + libdrm 交叉构建产物。
+
+            - Job conclusion: `${{ job.status }}`
+            - Route: `${{ github.event.inputs.route || 'full' }}`
+            - gallium/vulkan: `${{ github.event.inputs.gallium_drivers || 'panfrost' }}` / `${{ github.event.inputs.vulkan_drivers || 'panfrost' }}`
+            - Commit: `${{ github.sha }}`
+            - `verify-panthor.txt`: readelf/strings 校验（含 panthor KMD、arm64 ABI、NEEDED 洁净）
+            - `build.log`: 完整构建日志（失败时也在）
+            - `android-mesa-panthor-prebuilts.tar.gz`: device_redroid-prebuilts 布局的 .so（成功时）
+          draft: false
+          prerelease: true
+          fail_on_unmatched_files: false
+          files: |
+            ${{ github.workspace }}/work/android-mesa-panthor-prebuilts.tar.gz
+            ${{ github.workspace }}/work/verify-panthor.txt
+            ${{ github.workspace }}/work/build.log

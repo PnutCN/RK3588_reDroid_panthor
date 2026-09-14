@@ -1,0 +1,8 @@
+# 构建工作目录（NDK 下载、mesa 全量树、libdrm、sysroot 垫片、stage、out 产物）
+# 体积大且可重建，不入库。用 WORK=/path 可改到别处。
+.work/
+.work-mock/
+
+# meson/ninja 临时
+*.log
+build-android-*/

@@ -1,0 +1,66 @@
+# =============================================================================
+# Meson cross-file 模板 —— Android arm64 (Bionic) via NDK LLVM 工具链
+# =============================================================================
+# 由 scripts/gen-android-sysroot.sh 渲染（替换 @...@ 占位符）后写入
+#   $WORK/sysroot/cross-android-aarch64.ini
+# 参考：remote-android/mesa .gitlab-ci/container/create-android-cross-file.sh
+#       （此处升级为现代 NDK 统一 clang --target 写法，不再用 <arch>29-clang 包装器）
+#
+# 两层 sysroot：
+#   1) NDK sysroot：libc/libm/libdl/liblog/libz/libsync/libnativewindow/libandroid
+#      + 稳定 NDK 头（android/*.h, vulkan/*.h, zlib.h）
+#   2) 本项目 shim：NDK 缺的 AOSP 专有头(cutils/ hardware/ log/ sync/
+#      nativewindow/ system/ hwvulkan/) + libcutils/libhardware 链接期 stub .so
+#      + libdrm(由 10-build-libdrm.sh 装入)
+#
+# 渲染时替换的占位符（见 gen-android-sysroot.sh 的 sed）：
+#   NDK_BIN, NDK_TRIPLE, ANDROID_API, NDK_SYSROOT,
+#   SHIM_PC, SHIM_INCLUDE, SHIM_LIB, CPU_FAMILY, CPU, CCACHE
+# =============================================================================
+
+[constants]
+ndk_bin = '@NDK_BIN@'
+triple  = '@NDK_TRIPLE@'
+api     = '@ANDROID_API@'
+ndk_sysroot = '@NDK_SYSROOT@'
+shim_inc = '@SHIM_INCLUDE@'
+shim_lib = '@SHIM_LIB@'
+# 关键：统一 clang 用 --target=<triple><api> 指定 ABI 与 API level
+target  = '--target=' + triple + api
+# Mesa 不使用 C++ 异常；关闭可避免 unwind 符号破坏 libEGL/驱动的符号测试
+# （沿用上游 create-android-cross-file.sh 的 -fno-exceptions/-fno-unwind-tables）
+hardening = ['-fno-exceptions', '-fno-unwind-tables', '-fno-asynchronous-unwind-tables']
+shim_cargs = ['--sysroot=' + ndk_sysroot, '-I' + shim_inc]
+shim_largs = ['--sysroot=' + ndk_sysroot, '-L' + shim_lib]
+
+[binaries]
+c       = [@CCACHE@ ndk_bin / 'clang',   target] + hardening
+cpp     = [@CCACHE@ ndk_bin / 'clang++', target] + hardening
+c_ld    = 'lld'
+cpp_ld  = 'lld'
+ar      = ndk_bin / 'llvm-ar'
+ranlib  = ndk_bin / 'llvm-ranlib'
+strip   = ndk_bin / 'llvm-strip'
+# pkg-config 指向系统 pkg-config，但用 PKG_CONFIG_LIBDIR 限定只搜我们的垫片目录，
+# 避免误用宿主(x86_64/glibc)的 .pc。不设 PKG_CONFIG_SYSROOT_DIR：我们的 .pc
+# 一律写绝对路径，避免二次前缀。
+pkgconfig = ['env', 'PKG_CONFIG_LIBDIR=@SHIM_PC@', '/usr/bin/pkg-config']
+# 交叉编译时禁止 meson 跑 llvm-config（Android 路线 -Dllvm=disabled）
+llvm-config = '/bin/false'
+
+[built-in options]
+# 所有 built-in 库/头搜索都落在 NDK sysroot + 我们的 shim，而非宿主 /usr
+c_args        = shim_cargs
+cpp_args      = shim_cargs
+c_link_args   = shim_largs
+cpp_link_args = shim_largs
+
+[host_machine]
+system     = 'linux'      # Bionic 仍报 linux；Mesa 用 with_platform_android 区分
+cpu_family = '@CPU_FAMILY@'
+cpu        = '@CPU@'
+endian     = 'little'
+
+[properties]
+# 交叉编译：生成的可执行文件不能在构建机运行（mesa-clc 等宿主工具需另建）
+needs_exe_wrapper = true

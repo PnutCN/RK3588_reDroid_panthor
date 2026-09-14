@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+# =============================================================================
+# 20-build-mesa.sh —— 交叉构建 Android arm64 Mesa
+#                       (Panfrost gallium + PanVK + GBM + EGL/GLES, android platform)
+# =============================================================================
+# 对应移植清单 6.2：
+#   [x] 选定含 Panthor KMD / G610 / AHardwareBuffer 的 Mesa commit（VERSIONS.env）
+#   [x] Android arm64 启用 EGL/GLES、Gallium Panfrost、PanVK、GBM、android platform
+#   [x] 与匹配的 libdrm/UAPI 同步构建（10-build-libdrm.sh 已装入 $SHIM）
+#   [x] 产出 libEGL_mesa / GLES / libgallium_dri(panfrost_dri) / libvulkan_panfrost
+#       / libgbm / libglapi（30-package-prebuilts.sh 落位）
+#   [x] 绝不复用宿主 Ubuntu 的 Mesa .deb（本脚本全程 NDK/Bionic 交叉编译）
+#
+# 选项依据（均在 mesa-current/meson.options 与 meson.build 中核对过）：
+#   * vulkan-drivers=panfrost  => PanVK（源码在 src/panfrost/vulkan，产物 libvulkan_panfrost.so）
+#   * gallium-drivers=panfrost => Panfrost gallium（kmsro 在 26.x 已随 panfrost 内建，非独立选项）
+#   * platforms=android        => 只能单独启用（meson.build:512 不允许与其它 platform 并存）
+#   * gbm=enabled              => reDroid gralloc.gbm 需要 libgbm（android 属 system_has_kms_drm）
+#   * egl/gles1/gles2=enabled  => libEGL_mesa / libGLESv1_CM_mesa / libGLESv2_mesa
+#   * egl-lib-suffix/gles-lib-suffix=_mesa + glvnd=disabled
+#                                => Android 加载器按 ro.hardware.egl=mesa dlopen libEGL_mesa.so
+#                                   （meson.build:696 要求用 suffix 时必须关 glvnd）
+#   * llvm=disabled            => panfrost/panvk 不需要 LLVM（避免巨型依赖）
+#   * expat/xmlconfig=disabled => Android 上 xmlconfig 不可用（meson.build:1934）
+#   * android-libbacktrace/libperfetto=disabled, perfetto=false, libunwind=disabled
+#                                => 去掉 backtrace/perfetto/libunwind 依赖（meson.build:2247
+#                                   明确 Android 用 backtrace 而非 libunwind；此处都不引）
+#
+# 环境变量：
+#   ANDROID_STUB=1   切换 -Dandroid-stub=true 且跳过 AOSP 依赖（仅工具链冒烟，非生产）
+#   GALLIUM_DRIVERS  覆盖 gallium 驱动列表（默认 panfrost；可加 softpipe 做软件回退）
+#   VULKAN_DRIVERS   覆盖 vulkan 驱动列表（默认 panfrost=PanVK）
+#   BUILDTYPE        默认 release
+# =============================================================================
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/common.sh"
+
+need meson
+need ninja
+resolve_ndk
+
+MESA_SRC="${MESA_SRC_DIR:-$SRC/mesa}"
+[ -f "$MESA_SRC/meson.build" ] || die "缺 Mesa 源码：先跑 scripts/00-fetch-sources.sh（或设 MESA_SRC_DIR）"
+[ -f "$CROSS_FILE" ]           || die "缺 cross-file：先跑 scripts/gen-android-sysroot.sh"
+[ -f "$SHIM_PC/libdrm.pc" ]    || die "缺 libdrm.pc：先跑 scripts/10-build-libdrm.sh"
+
+# Mesa 构建期需要宿主 python + mako（pan_packers / vulkan entrypoints 代码生成）
+python3 -c 'import mako' 2>/dev/null || die "缺 python3-mako（Mesa 代码生成需要）：apt install python3-mako / pip install mako"
+
+GALLIUM_DRIVERS="${GALLIUM_DRIVERS:-panfrost}"
+VULKAN_DRIVERS="${VULKAN_DRIVERS:-panfrost}"
+BUILDTYPE="${BUILDTYPE:-release}"
+ANDROID_STUB="${ANDROID_STUB:-0}"
+if [ "$ANDROID_STUB" = "1" ]; then ANDROID_STUB_OPT=true; else ANDROID_STUB_OPT=false; fi
+
+# 安装布局对齐设备 /vendor/lib64（DESTDIR 暂存到 $STAGE）
+PREFIX=/vendor
+LIBDIR=lib64
+DRI_PATH="$PREFIX/$LIBDIR/dri"
+ICD_PATH="$PREFIX/etc/vulkan/icd.d"
+
+BUILD="$MESA_SRC/build-android-${TARGET_ARCH}"
+log "配置 Mesa 交叉构建 -> $BUILD"
+log "  gallium-drivers=$GALLIUM_DRIVERS  vulkan-drivers=$VULKAN_DRIVERS  android-stub=$ANDROID_STUB_OPT"
+rm -rf "$BUILD"
+
+meson setup "$BUILD" "$MESA_SRC" \
+  --cross-file="$CROSS_FILE" \
+  --prefix="$PREFIX" \
+  --libdir="$LIBDIR" \
+  --buildtype="$BUILDTYPE" \
+  -Dplatforms=android \
+  -Dplatform-sdk-version="$PLATFORM_SDK_VERSION" \
+  -Dandroid-strict=true \
+  -Dandroid-stub="$ANDROID_STUB_OPT" \
+  -Dandroid-libbacktrace=disabled \
+  -Dandroid-libperfetto=disabled \
+  -Dperfetto=false \
+  -Dgallium-drivers="$GALLIUM_DRIVERS" \
+  -Dvulkan-drivers="$VULKAN_DRIVERS" \
+  -Dgbm=enabled \
+  -Degl=enabled \
+  -Dgles1=enabled \
+  -Dgles2=enabled \
+  -Dglvnd=disabled \
+  -Degl-lib-suffix=_mesa \
+  -Dgles-lib-suffix=_mesa \
+  -Dllvm=disabled \
+  -Dcpp_rtti=false \
+  -Dglx=disabled \
+  -Dexpat=disabled \
+  -Dxmlconfig=disabled \
+  -Dlibunwind=disabled \
+  -Dgallium-va=disabled \
+  -Dvulkan-layers= \
+  -Dbuild-tests=false \
+  -Ddri-drivers-path="$DRI_PATH" \
+  -Dvulkan-icd-dir="$ICD_PATH"
+
+log "编译 Mesa（ninja）"
+ninja -C "$BUILD"
+
+log "安装到 DESTDIR=$STAGE（prefix=$PREFIX libdir=$LIBDIR）"
+rm -rf "$STAGE"
+DESTDIR="$STAGE" ninja -C "$BUILD" install
+
+# ---- 产物存在性快检（详细校验在 40-verify-panthor.sh）----
+STAGE_LIB="$STAGE$PREFIX/$LIBDIR"
+expect_present() { [ -e "$1" ] || die "预期产物缺失：$1"; }
+expect_present "$STAGE_LIB/dri/libgallium_dri.so"
+expect_present "$STAGE_LIB/libgbm.so.1"
+ls "$STAGE_LIB"/libEGL_mesa.so*        >/dev/null 2>&1 || die "缺 libEGL_mesa.so（egl-lib-suffix 未生效？）"
+ls "$STAGE_LIB"/libGLESv2_mesa.so*     >/dev/null 2>&1 || die "缺 libGLESv2_mesa.so"
+ls "$STAGE_LIB"/libvulkan_panfrost.so* >/dev/null 2>&1 || die "缺 libvulkan_panfrost.so（PanVK 未构建？）"
+
+log "Mesa 构建完成。产物根：$STAGE_LIB"
+log "下一步：scripts/30-package-prebuilts.sh（落位 device_redroid-prebuilts 布局）"
