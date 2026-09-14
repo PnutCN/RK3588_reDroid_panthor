@@ -77,14 +77,17 @@ jobs:
 
       - name: Build (cross-compile Mesa + libdrm for android/arm64)
         env:
-          ANDROID_STUB: ${{ github.event.inputs.route == 'smoke' && '1' || '0' }}
+          # push 事件(inputs 为空)走 smoke 快速验证工具链；workflow_dispatch 默认 full 生产。
+          ANDROID_STUB: ${{ github.event.inputs.route == 'full' && '0' || '1' }}
           GALLIUM_DRIVERS: ${{ github.event.inputs.gallium_drivers || 'panfrost' }}
           VULKAN_DRIVERS: ${{ github.event.inputs.vulkan_drivers || 'panfrost' }}
           WORK: ${{ github.workspace }}/work
         run: |
           set -o pipefail
+          mkdir -p "$WORK"   # tee 目标目录必须先建；否则 build.log 丢失且 SIGPIPE 会中断构建(run #1 的坑)
           cd "$SCAFFOLD_DIR"
           chmod +x scripts/*.sh
+          echo "== env: NDK=${NDK:-<unset>} WORK=$WORK STUB=$ANDROID_STUB gallium=$GALLIUM_DRIVERS vulkan=$VULKAN_DRIVERS"
           ./scripts/build-all.sh 2>&1 | tee "$WORK/build.log"
 
       - name: Verify Panthor KMD / ABI / deps (清单 6.2 line270)
