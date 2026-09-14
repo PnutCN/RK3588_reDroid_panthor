@@ -30,25 +30,30 @@ BUILD="$LIBDRM_SRC/build-android-${TARGET_ARCH}"
 log "配置 libdrm 交叉构建 -> $BUILD"
 rm -rf "$BUILD"
 
-# 关闭一切 vendor 子模块与测试，只留 libdrm 核心；bionic 下 pthread 在 libc，无需 pthread-stubs
+# 关闭一切 vendor 子模块与测试，只留 libdrm 核心。
+# 选项类型须与 libdrm 2.4.123/meson_options.txt 一致，否则 meson setup 直接报错：
+#   * feature 类型(intel/radeon/amdgpu/nouveau/vmwgfx/freedreno/vc4/etnaviv/tegra/
+#     exynos/omap/cairo-tests/man-pages/valgrind) 只收 enabled/disabled/auto；
+#   * boolean 类型(udev/tests/install-test-programs) 才收 true/false。
+# libkms 自 2.4.113 起已从 libdrm 移除，不能再传 -Dlibkms（否则 "Unknown options"）。
+# bionic 下 pthread 在 libc，无需 pthread-stubs。
 meson setup "$BUILD" "$LIBDRM_SRC" \
   --cross-file="$CROSS_FILE" \
   --prefix="$SHIM" \
   --libdir=lib \
   --buildtype=release \
   --default-library=shared \
-  -Dlibkms=false \
-  -Dintel=false \
-  -Dradeon=false \
-  -Damdgpu=false \
-  -Dnouveau=false \
-  -Dvmwgfx=false \
-  -Dfreedreno=false \
-  -Dvc4=false \
-  -Detnaviv=false \
-  -Dtegra=false \
-  -Dexynos=false \
-  -Domap=false \
+  -Dintel=disabled \
+  -Dradeon=disabled \
+  -Damdgpu=disabled \
+  -Dnouveau=disabled \
+  -Dvmwgfx=disabled \
+  -Dfreedreno=disabled \
+  -Dvc4=disabled \
+  -Detnaviv=disabled \
+  -Dtegra=disabled \
+  -Dexynos=disabled \
+  -Domap=disabled \
   -Dcairo-tests=disabled \
   -Dman-pages=disabled \
   -Dvalgrind=disabled \

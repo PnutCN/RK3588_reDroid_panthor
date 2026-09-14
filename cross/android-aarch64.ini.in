@@ -44,7 +44,7 @@ strip   = ndk_bin / 'llvm-strip'
 # pkg-config 指向系统 pkg-config，但用 PKG_CONFIG_LIBDIR 限定只搜我们的垫片目录，
 # 避免误用宿主(x86_64/glibc)的 .pc。不设 PKG_CONFIG_SYSROOT_DIR：我们的 .pc
 # 一律写绝对路径，避免二次前缀。
-pkgconfig = ['env', 'PKG_CONFIG_LIBDIR=@SHIM_PC@', '/usr/bin/pkg-config']
+pkg-config = ['env', 'PKG_CONFIG_LIBDIR=@SHIM_PC@', '/usr/bin/pkg-config']
 # 交叉编译时禁止 meson 跑 llvm-config（Android 路线 -Dllvm=disabled）
 llvm-config = '/bin/false'
 

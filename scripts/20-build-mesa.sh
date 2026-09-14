@@ -22,6 +22,10 @@
 #                                   （meson.build:696 要求用 suffix 时必须关 glvnd）
 #   * llvm=disabled            => panfrost/panvk 不需要 LLVM（避免巨型依赖）
 #   * expat/xmlconfig=disabled => Android 上 xmlconfig 不可用（meson.build:1934）
+#   * libunwind=disabled       => meson.build:2246 对 android 有 .require(not with_platform_android)，
+#                                 即 android 上 libunwind 若启用会直接 error，故必须 disabled
+#   * vulkan-layers 默认即 []（不建任何 layer），无需显式传 -Dvulkan-layers=
+#                                 （给带 choices 的 array 选项传空串，解析行为随 meson 版本而异，省略最稳）
 #   * android-libbacktrace/libperfetto=disabled, perfetto=false, libunwind=disabled
 #                                => 去掉 backtrace/perfetto/libunwind 依赖（meson.build:2247
 #                                   明确 Android 用 backtrace 而非 libunwind；此处都不引）
@@ -91,7 +95,6 @@ meson setup "$BUILD" "$MESA_SRC" \
   -Dxmlconfig=disabled \
   -Dlibunwind=disabled \
   -Dgallium-va=disabled \
-  -Dvulkan-layers= \
   -Dbuild-tests=false \
   -Ddri-drivers-path="$DRI_PATH" \
   -Dvulkan-icd-dir="$ICD_PATH"
