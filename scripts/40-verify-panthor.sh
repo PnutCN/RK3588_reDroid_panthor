@@ -55,7 +55,8 @@ check_elf() {
   typ="$(echo "$hdr"   | awk -F: '/Type:/{gsub(/^ +/,"",$2);print $2}')"
   local name; name="$(basename "$f")"
   case "$class" in *ELF64*) ok "$name: ELF64";; *) bad "$name: Class=$class（应 ELF64）";; esac
-  case "$mach"  in *AARCH64*|*aarch64*) ok "$name: Machine=AArch64";; *) bad "$name: Machine=$mach（应 AArch64，疑似宿主架构泄漏）";; esac
+  # readelf 对 arm64 精确输出 "AArch64"（大小写混合）；转小写再匹配，避免大小写漏配
+  case "$(printf '%s' "$mach" | tr '[:upper:]' '[:lower:]')" in *aarch64*|*arm64*) ok "$name: Machine=$mach";; *) bad "$name: Machine=$mach（应 AArch64，疑似宿主架构泄漏）";; esac
   case "$typ"   in *DYN*) ok "$name: Type=DYN(共享对象)";; *) wrn "$name: Type=$typ";; esac
 }
 check_elf "$DRI"; check_elf "$VK"; check_elf "$EGL"; check_elf "$GBM"
