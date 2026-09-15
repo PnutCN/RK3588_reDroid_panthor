@@ -35,27 +35,29 @@ READELF="$(command -v readelf || command -v llvm-readelf || true)"; [ -n "$READE
 
 mkdir -p "$WORK"
 
-# --- 1) 解析 Mesa 产物 -> $WORK/prebuilts/arm64 -------------------------------
-ARM64="$WORK/prebuilts/arm64"
-rm -rf "$WORK/prebuilts"; mkdir -p "$WORK/prebuilts"
+# --- 1) 解析 Mesa 产物 -> $ARM64（含 lib/egl 的目录）--------------------------
+# 统一解包/拷贝到 $EXTRACT，再按 lib/egl 定位 arm64 目录，兼容任意嵌套深度：
+#   Release tarball 内是 prebuilts/arm64/lib/egl/...（android-mesa.yml 从 out/ 打包 prebuilts），
+#   直接给目录时可能是 .../arm64 或 .../arm64/lib/egl 的上层，故不按固定路径猜。
+EXTRACT="$WORK/extract"; rm -rf "$EXTRACT"; mkdir -p "$EXTRACT"
 case "$MESA_SRC" in
   http://*|https://*)
     log "下载 Mesa 产物：$MESA_SRC"
     curl -fsSL --retry 3 -o "$WORK/mesa.tar.gz" "$MESA_SRC" || die "下载失败：$MESA_SRC"
-    tar -xzf "$WORK/mesa.tar.gz" -C "$WORK/prebuilts" ;;
+    tar -xzf "$WORK/mesa.tar.gz" -C "$EXTRACT" ;;
   *)
     if [ -d "$MESA_SRC" ]; then
       log "Mesa 产物目录：$MESA_SRC"
-      # 允许直接给 .../prebuilts/arm64 或其上层
-      if [ -d "$MESA_SRC/lib/egl" ]; then cp -a "$MESA_SRC" "$ARM64"
-      elif [ -d "$MESA_SRC/arm64" ]; then cp -a "$MESA_SRC/arm64" "$ARM64"
-      else cp -a "$MESA_SRC/." "$WORK/prebuilts/"; fi
+      cp -a "$MESA_SRC/." "$EXTRACT/"
     elif [ -f "$MESA_SRC" ]; then
       log "Mesa 产物 tar：$MESA_SRC"
-      tar -xzf "$MESA_SRC" -C "$WORK/prebuilts"
+      tar -xzf "$MESA_SRC" -C "$EXTRACT"
     else die "MESA_SRC 既非 URL 也不存在：$MESA_SRC"; fi ;;
 esac
-[ -d "$ARM64/lib/egl" ] || die "解析后未找到 $ARM64/lib/egl（Mesa 产物布局不符）"
+EGLDIR="$(find "$EXTRACT" -maxdepth 6 -type d -name egl -path '*/lib/egl' 2>/dev/null | head -1)"
+[ -n "$EGLDIR" ] || die "解析后未找到 */lib/egl 目录（Mesa 产物布局不符）"
+ARM64="$(dirname "$(dirname "$EGLDIR")")"   # 去掉尾部 /lib/egl
+[ -d "$ARM64/lib/egl" ] || die "定位异常：$ARM64/lib/egl 不存在"
 log "Mesa arm64 产物就绪：$ARM64"
 
 # --- 2) 拉 base 镜像（arm64）-------------------------------------------------
