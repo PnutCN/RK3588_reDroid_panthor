@@ -1,0 +1,157 @@
+name: redroid-rk3588-panthor-image
+
+# =============================================================================
+# 产出「可用的 reDroid 镜像」：上游 reDroid arm64 镜像 + 交叉构建的 Panthor 版
+# Mesa/PanVK/GBM（android-mesa workflow 的 Release 产物）drop-in 替换。
+#
+# 为什么用 ubuntu-24.04-arm：需要原生 arm64 docker（拉/建/导出 arm64 镜像、readelf
+#   arm64 库、Dockerfile 里的 RUN 原生执行），x86 runner 需 qemu 且慢。
+# 为什么不自建 LineageOS 镜像：AOSP 全量构建需 ~400GB/数小时，超出 runner 限额；
+#   上游 reDroid 镜像已含 Android rootfs + gralloc.gbm/hwcomposer.redroid，
+#   我们只替换其中的 Mesa 栈（清单 6.3：gralloc/HWC 走上游不重建）。
+#
+# 触发：push 到 main 且改动 redroid-image/** 或本文件；或手动 Run workflow。
+# 产物：GHCR 镜像 + Release（docker save 包 + verify-image.txt + build.log）。
+# =============================================================================
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_image:
+        description: 'reDroid 基座镜像(arm64)'
+        required: false
+        default: 'redroid/redroid:13.0.0-latest'
+      mesa_release_tag:
+        description: 'Mesa 产物 Release tag（latest=自动取最新 android-mesa-panthor-*）'
+        required: false
+        default: 'latest'
+      out_tag:
+        description: '产出镜像 tag'
+        required: false
+        default: 'lineage-20'
+      push_ghcr:
+        description: '推送到 GHCR'
+        required: false
+        type: boolean
+        default: true
+  push:
+    branches:
+      - main
+    paths:
+      - 'redroid-image/**'
+      - '.github/workflows/redroid-image.yml'
+
+permissions:
+  contents: write   # 发布 Release
+  packages: write   # 推送 GHCR
+
+jobs:
+  build-image:
+    name: reDroid arm64 image + Panthor Mesa
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install tools (patchelf/binutils/zstd/jq)
+        run: |
+          set -x
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends patchelf binutils zstd xz-utils curl jq
+          uname -m; docker version --format 'client={{.Client.Version}} server={{.Server.Version}}'
+          patchelf --version; readelf --version | head -1
+          docker buildx version || true
+
+      - name: Resolve Mesa prebuilts Release
+        id: mesa
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          REPO="${{ github.repository }}"
+          TAG="${{ github.event.inputs.mesa_release_tag || 'latest' }}"
+          if [ "$TAG" = "latest" ]; then
+            TAG="$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/$REPO/releases?per_page=40" \
+              | jq -r '[.[] | select(.tag_name|startswith("android-mesa-panthor-"))
+                        | select(any(.assets[]; .name=="android-mesa-panthor-prebuilts.tar.gz"))
+                        | .tag_name][0]')"
+          fi
+          if [ -z "$TAG" ] || [ "$TAG" = "null" ]; then echo "::error::无法解析 Mesa Release tag"; exit 1; fi
+          URL="https://github.com/$REPO/releases/download/$TAG/android-mesa-panthor-prebuilts.tar.gz"
+          echo "Mesa release tag = $TAG"; echo "Mesa URL = $URL"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"; echo "url=$URL" >> "$GITHUB_OUTPUT"
+
+      - name: Build image (pull base + inject Mesa + build + verify + save)
+        env:
+          MESA_SRC: ${{ steps.mesa.outputs.url }}
+          BASE_IMAGE: ${{ github.event.inputs.base_image || 'redroid/redroid:13.0.0-latest' }}
+          OUT_IMAGE: redroid-rk3588-panthor:${{ github.event.inputs.out_tag || 'lineage-20' }}
+          WORK: ${{ github.workspace }}/work-image
+        run: |
+          set -o pipefail
+          mkdir -p "$WORK"
+          chmod +x redroid-image/*.sh
+          echo "== MESA_SRC=$MESA_SRC"; echo "== BASE_IMAGE=$BASE_IMAGE"; echo "== OUT_IMAGE=$OUT_IMAGE"
+          bash redroid-image/build-image.sh 2>&1 | tee "$WORK/build.log"
+
+      - name: Push to GHCR
+        if: ${{ github.event.inputs.push_ghcr != 'false' }}
+        env:
+          OUT_IMAGE: redroid-rk3588-panthor:${{ github.event.inputs.out_tag || 'lineage-20' }}
+          OUT_TAG: ${{ github.event.inputs.out_tag || 'lineage-20' }}
+        run: |
+          set -euo pipefail
+          OWNER="$(echo "${{ github.repository_owner }}" | tr 'A-Z' 'a-z')"
+          GHCR="ghcr.io/${OWNER}/redroid-rk3588-panthor"
+          echo "push -> $GHCR:$OUT_TAG (+ latest)"
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker tag "$OUT_IMAGE" "$GHCR:$OUT_TAG"
+          docker tag "$OUT_IMAGE" "$GHCR:latest"
+          docker push "$GHCR:$OUT_TAG"
+          docker push "$GHCR:latest"
+          echo "GHCR_IMAGE=$GHCR:$OUT_TAG" >> "$GITHUB_ENV"
+
+      - name: Summarize
+        if: always()
+        env:
+          WORK: ${{ github.workspace }}/work-image
+        run: |
+          echo "===== verify-image.txt ====="; cat "$WORK/verify-image.txt" 2>/dev/null || true
+          echo "===== build.log (tail 80) ====="; tail -80 "$WORK/build.log" 2>/dev/null || true
+          echo "===== 镜像包 ====="; ls -lh "$WORK"/redroid-rk3588-panthor.tar.* 2>/dev/null || true
+          docker images | grep -E 'redroid|REPOSITORY' || true
+
+      - name: Publish Release (image tarball + verify + log)
+        if: always()
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: redroid-image-${{ github.run_number }}
+          name: reDroid RK3588 Panthor image run ${{ github.run_number }}.${{ github.run_attempt }}
+          body: |
+            `redroid-rk3588-panthor`：上游 reDroid arm64 镜像 + Panthor 版 Mesa/PanVK/GBM（drop-in 替换）。
+
+            - Job conclusion: `${{ job.status }}`
+            - Base image: `${{ github.event.inputs.base_image || 'redroid/redroid:13.0.0-latest' }}`
+            - Mesa release: `${{ steps.mesa.outputs.tag }}`
+            - Commit: `${{ github.sha }}`
+            - GHCR: `${{ env.GHCR_IMAGE || '(未推送)' }}`
+            - `verify-image.txt`: 注入后 /vendor 校验（含 Panthor KMD、arm64 ABI、libgbm SONAME、drop-in 依赖闭合）
+            - `build.log`: 完整构建日志（base /vendor 探测 + inject + build + verify；失败时也在）
+            - `redroid-rk3588-panthor.tar.zst`: `docker save` 镜像包（成功时；`zstd -d | docker load`）
+
+            在 Orange Pi 5 Max（宿主已烧主线 Panthor 镜像、Gate 0 通过）上运行：
+            ```
+            docker run -itd --privileged --device /dev/dri/renderD128 \
+              -v ~/redroid-data:/data -p 5555:5555 \
+              <image> androidboot.redroid_gpu_mode=host androidboot.redroid_gpu_node=/dev/dri/renderD128
+            ```
+          draft: false
+          prerelease: true
+          fail_on_unmatched_files: false
+          files: |
+            ${{ github.workspace }}/work-image/redroid-rk3588-panthor.tar.zst
+            ${{ github.workspace }}/work-image/redroid-rk3588-panthor.tar.xz
+            ${{ github.workspace }}/work-image/verify-image.txt
+            ${{ github.workspace }}/work-image/build.log

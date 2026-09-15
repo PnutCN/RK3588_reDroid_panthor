@@ -1,0 +1,9 @@
+# =============================================================================
+# redroid-rk3588-panthor —— 上游 reDroid arm64 镜像 + Panthor 版 Mesa（drop-in 替换）
+# 构建上下文由 inject-mesa.sh 准备：overlay/vendor/... 覆盖到镜像 /vendor/...
+# 只替换 Mesa/GBM/libdrm 派生库 + gpu_config.sh；reDroid 自身的 gralloc.gbm /
+# hwcomposer.redroid / audio.primary.redroid / uinputd / vncserver 保持上游原样。
+# =============================================================================
+FROM @BASE_IMAGE@
+COPY overlay/ /
+@REMOVE_LLVM_CMD@
