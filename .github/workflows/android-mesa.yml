@@ -69,12 +69,15 @@ jobs:
             set -x
             sudo apt-get update
             # 交叉构建本体只需这些基础工具（run #4/#5 已验证可用）
+            # cmake/git：供 15-build-native-clc-tools.sh 从源码构建 SPIRV-Tools 用
             sudo apt-get install -y --no-install-recommends \
-              ninja-build pkg-config python3-mako python3-pip ccache unzip xz-utils
+              ninja-build pkg-config python3-mako python3-pip ccache unzip xz-utils cmake git
             set +x
             # host CLC 工具链：逐包安装，单个失败不中断整步，最后统一诊断，
             # 这样一次就能看清到底哪个包缺失/冲突（run #6 在此步 6s 内失败但无日志）。
-            LLC_PKGS="llvm-18-dev libclang-18-dev libclang-cpp18-dev clang-18 libllvmspirvlib-18-dev spirv-tools libspirv-tools-dev libdrm-dev"
+            # run #7 定位：noble 无 libspirv-tools-dev（spirv-tools 源码包只出 CLI，也无 spirv-tools-dev），
+            #   故 SPIRV-Tools.pc 改由 15-build-native-clc-tools.sh 从源码构建，这里只装 LLVM/clang/libdrm。
+            LLC_PKGS="llvm-18-dev libclang-18-dev libclang-cpp18-dev clang-18 libllvmspirvlib-18-dev libdrm-dev"
             FAILED=""
             for p in $LLC_PKGS; do
               if sudo apt-get install -y --no-install-recommends "$p"; then

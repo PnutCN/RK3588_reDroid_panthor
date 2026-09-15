@@ -27,7 +27,8 @@
 # host 依赖（GitHub ubuntu-24.04 apt，见 .github/workflows/android-mesa.yml）：
 #   llvm-18-dev libclang-18-dev libclang-cpp18-dev clang-18
 #   libllvmspirvlib-18-dev   (= LLVMSPIRVLib，版本须与 LLVM 主.次一致，见 meson.build:2085)
-#   spirv-tools libspirv-tools-dev (>= 2024.1，见 meson.build:2099)
+#   SPIRV-Tools (>= 2024.1，见 meson.build:2099)：Ubuntu noble 无 dev 包（spirv-tools 源码包
+#     只产 CLI，无 libspirv-tools-dev/spirv-tools-dev），故本脚本用 cmake 从源码构建【静态】库。
 #   libdrm-dev               (tools=panfrost 的 bifrost_compiler/panfrost 工具需 dep_libdrm)
 # 说明：
 #   * 不需要 libclc —— dep_clc 仅在 rusticl/microsoft-clc 时才要(meson.build:1072)；
@@ -71,6 +72,53 @@ if [ -n "$SPV_PC" ]; then
   log "PKG_CONFIG_PATH += $(dirname "$SPV_PC")（LLVMSPIRVLib.pc）"
 else
   warn "未找到 LLVMSPIRVLib.pc（apt install libllvmspirvlib-18-dev？）；meson 或将报缺 LLVMSPIRVLib"
+fi
+
+# ---- SPIRV-Tools（dev）：Ubuntu noble 不提供 SPIRV-Tools 的 dev 包 ------------------
+#   spirv-tools 源码包只产 CLI(spirv-tools)，无 libspirv-tools-dev/spirv-tools-dev（全套件皆无，
+#   run #7 已证实）。而 mesa_clc 硬依赖 SPIRV-Tools.pc(>=2024.1)（root meson.build:2096-2102）。
+#   故用 cmake 从源码构建【静态】库：静态 => mesa_clc 运行期无需再找 libSPIRV-Tools.so，
+#   交叉构建阶段直接从 PATH 调用即可，省掉 LD_LIBRARY_PATH 之类脆弱处理。
+SPV_TAG="${SPIRV_TOOLS_TAG:-v2025.1}"
+SPV_PREFIX="$WORK/spirv-tools-install"
+# .pc 依发行版/cmake 版本可能落在 lib/ 或 lib/x86_64-linux-gnu/，统一探测后加进 PKG_CONFIG_PATH
+_spv_pcdirs() {
+  local d
+  for d in "$SPV_PREFIX/lib/pkgconfig" "$SPV_PREFIX/lib/x86_64-linux-gnu/pkgconfig" "$SPV_PREFIX/lib64/pkgconfig"; do
+    [ -d "$d" ] && printf '%s:' "$d"
+  done
+}
+if ! PKG_CONFIG_PATH="$(_spv_pcdirs)$PKG_CONFIG_PATH" pkg-config --exists 'SPIRV-Tools >= 2024.1' 2>/dev/null; then
+  need cmake
+  need git
+  SPV_SRC="$WORK/spirv-tools-src"
+  HDR_DIR="$WORK/spirv-headers"
+  log "构建 SPIRV-Tools ($SPV_TAG, 静态) -> $SPV_PREFIX"
+  rm -rf "$SPV_SRC" "$HDR_DIR"
+  git clone --depth 1 --branch "$SPV_TAG" https://github.com/KhronosGroup/SPIRV-Tools.git "$SPV_SRC"
+  # SPIRV_SKIP_TESTS=ON 下 external/CMakeLists.txt 只需 SPIRV-Headers（googletest/effcee/re2/abseil
+  # 均被 SKIP_TESTS 门控跳过），故无需 git-sync-deps（该脚本在 v2025.1 已改名/移除），
+  # 按 DEPS 的精确 sha 拉 headers，并用 -DSPIRV-Headers_SOURCE_DIR 指定，避开 external/spirv-headers 路径歧义。
+  HDR_REV="$(sed -nE "s/^[[:space:]]*'spirv_headers_revision'[[:space:]]*:[[:space:]]*'([0-9a-fA-F]+)'.*/\1/p" "$SPV_SRC/DEPS" | head -1)"
+  [ -n "$HDR_REV" ] || die "无法从 $SPV_SRC/DEPS 解析 spirv_headers_revision"
+  log "SPIRV-Headers @ $HDR_REV -> $HDR_DIR"
+  git init -q "$HDR_DIR"
+  git -C "$HDR_DIR" fetch --depth 1 https://github.com/KhronosGroup/SPIRV-Headers.git "$HDR_REV"
+  git -C "$HDR_DIR" checkout -q FETCH_HEAD
+  cmake -S "$SPV_SRC" -B "$SPV_SRC/build" \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX="$SPV_PREFIX" \
+    -DBUILD_SHARED_LIBS=OFF \
+    -DSPIRV_SKIP_TESTS=ON \
+    -DSPIRV-Headers_SOURCE_DIR="$HDR_DIR"
+  cmake --build "$SPV_SRC/build" -j"$(nproc)"
+  cmake --install "$SPV_SRC/build"
+fi
+export PKG_CONFIG_PATH="$(_spv_pcdirs)$PKG_CONFIG_PATH"
+if pkg-config --exists 'SPIRV-Tools >= 2024.1' 2>/dev/null; then
+  log "SPIRV-Tools dev 就绪：$(pkg-config --modversion SPIRV-Tools)"
+else
+  die "SPIRV-Tools.pc 仍不可达（检查上面 cmake 构建日志 / PKG_CONFIG_PATH=$PKG_CONFIG_PATH）"
 fi
 
 # ---- native-file：固定 llvm-config-18 + clang-18，避免误选 runner 上其它 LLVM ----
