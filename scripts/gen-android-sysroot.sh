@@ -12,17 +12,20 @@
 #      生成链接期 stub .so（运行时用设备上真实库解析同名 SONAME）
 #
 # 两种模式：
-#   默认(full)   : 拉 AOSP 头 + 造 stub，产出可用于生产的 android platform 依赖
-#   ANDROID_STUB=1: 跳过 AOSP 头/stub，仅供 -Dandroid-stub=true 的工具链冒烟构建
+#   默认(ANDROID_STUB=1): -Dandroid-stub=true，用 mesa 自带 src/android_stub 头/stub库——纯 NDK
+#                         独立构建的【标准生产路径】(run #8 已验证：真实 arm64 Panthor 驱动，无 libLLVM)。
+#   ANDROID_STUB=0(full) : 拉真实 AOSP 头 + 造 stub .so，走 dependency('cutils'/'hardware'/...)；
+#                         需完整 AOSP 头 sysroot（含 system/graphics.h；lineage-20.0 的 frameworks_native
+#                         无 graphics-base 故缺此头），仅在自备 AOSP 头时启用。
 #
-# 依赖：git、NDK（resolve_ndk）。full 模式需要网络拉 LineageOS 镜像。
+# 依赖：git、NDK（resolve_ndk）。full 模式(ANDROID_STUB=0)另需网络拉 LineageOS 镜像。
 # =============================================================================
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/common.sh"
 
 need git
 resolve_ndk
 
-ANDROID_STUB="${ANDROID_STUB:-0}"
+ANDROID_STUB="${ANDROID_STUB:-1}"   # 默认 stub=true：纯 NDK 独立构建的生产路径（mesa android_stub）
 
 # NDK 里 API 相关的 .so 目录（libsync/libnativewindow/liblog/libz/libandroid）
 NDK_LIBDIR="$NDK_SYSROOT/usr/lib/$NDK_ABI/$ANDROID_API"
@@ -86,7 +89,7 @@ fi
 # 3) AOSP 专有头 + stub .so（仅 full 模式）
 # ---------------------------------------------------------------------------
 if [ "$ANDROID_STUB" = "1" ]; then
-  log "ANDROID_STUB=1：跳过 AOSP 头/stub 拉取（仅供 -Dandroid-stub=true 冒烟）"
+  log "ANDROID_STUB=1：用 mesa android_stub，跳过 AOSP 头/stub 拉取（纯 NDK 独立构建的生产路径）"
 else
   KEY_HEADERS=(cutils/native_handle.h hardware/hardware.h sync/sync.h \
                log/log.h system/graphics.h nativewindow/ANativeWindowBase.h)

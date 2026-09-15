@@ -6,8 +6,8 @@
 # 任一步失败即停（set -e）。各步幂等，可单独重跑。
 #
 # 常用：
-#   ./build-all.sh                 # 生产路线（full android platform + AOSP 垫片）
-#   ANDROID_STUB=1 ./build-all.sh  # 工具链冒烟（-Dandroid-stub=true，不拉 AOSP 头）
+#   ./build-all.sh                 # 默认(ANDROID_STUB=1)：mesa android_stub 纯 NDK 独立构建（生产可用，run #8 已验证）
+#   ANDROID_STUB=0 ./build-all.sh  # full：链接真实 AOSP 头（需自备完整 AOSP 头 sysroot，含 system/graphics.h）
 #   WORK=/big/disk ./build-all.sh  # 指定大容量工作目录
 #   GALLIUM_DRIVERS=panfrost,softpipe ./build-all.sh   # 加软件回退
 # =============================================================================

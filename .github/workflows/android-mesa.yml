@@ -113,7 +113,11 @@ jobs:
 
       - name: Build (cross-compile Mesa + libdrm for android/arm64)
         env:
-          # push 事件(inputs 为空)走 smoke 快速验证工具链；workflow_dispatch 默认 full 生产。
+          # mesa 26.3 自带 src/android_stub：纯 NDK 独立构建的【标准生产路径】(run #8 已验证——
+          #   产出真实 arm64 Panthor 驱动；stub .so 仅链接期用、不入产物，运行期由设备真实库解析)。
+          #   故 push/默认走 android-stub=true。route=full 改用真实 AOSP 头(android-stub=false)，但
+          #   lineage-20.0 的 frameworks_native 无 graphics-base(缺 system/graphics.h)，需自备完整
+          #   AOSP 头 sysroot，暂未启用。
           ANDROID_STUB: ${{ github.event.inputs.route == 'full' && '0' || '1' }}
           GALLIUM_DRIVERS: ${{ github.event.inputs.gallium_drivers || 'panfrost' }}
           VULKAN_DRIVERS: ${{ github.event.inputs.vulkan_drivers || 'panfrost' }}

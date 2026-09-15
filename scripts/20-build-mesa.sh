@@ -37,7 +37,9 @@
 #                                   明确 Android 用 backtrace 而非 libunwind；此处都不引）
 #
 # 环境变量：
-#   ANDROID_STUB=1   切换 -Dandroid-stub=true 且跳过 AOSP 依赖（仅工具链冒烟，非生产）
+#   ANDROID_STUB=1   -Dandroid-stub=true，用 mesa 自带 android_stub 头/stub库（纯 NDK 独立构建的
+#                    标准生产路径；默认值。stub .so 仅链接期用、不入产物，运行期由设备真实库解析）
+#   ANDROID_STUB=0   -Dandroid-stub=false，链接真实 AOSP cutils/hardware/... 头（需自备 AOSP 头 sysroot）
 #   GALLIUM_DRIVERS  覆盖 gallium 驱动列表（默认 panfrost；可加 softpipe 做软件回退）
 #   VULKAN_DRIVERS   覆盖 vulkan 驱动列表（默认 panfrost=PanVK）
 #   BUILDTYPE        默认 release
@@ -70,7 +72,7 @@ log "原生 CLC 工具就位：$(command -v mesa_clc) / $(command -v vtn_bindgen
 GALLIUM_DRIVERS="${GALLIUM_DRIVERS:-panfrost}"
 VULKAN_DRIVERS="${VULKAN_DRIVERS:-panfrost}"
 BUILDTYPE="${BUILDTYPE:-release}"
-ANDROID_STUB="${ANDROID_STUB:-0}"
+ANDROID_STUB="${ANDROID_STUB:-1}"   # 默认 stub=true（CI push 路线即此；run #8 已验证含 Panthor）
 if [ "$ANDROID_STUB" = "1" ]; then ANDROID_STUB_OPT=true; else ANDROID_STUB_OPT=false; fi
 
 # 安装布局对齐设备 /vendor/lib64（DESTDIR 暂存到 $STAGE）
