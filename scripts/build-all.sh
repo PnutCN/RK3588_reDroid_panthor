@@ -13,7 +13,7 @@
 # =============================================================================
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/common.sh"
 
-STEPS="${STEPS:-fetch sysroot libdrm mesa package verify}"
+STEPS="${STEPS:-fetch sysroot libdrm nativeclc mesa package verify}"
 run_step() {
   local s="$1"; shift
   log "======== 步骤：$s ========"
@@ -25,10 +25,11 @@ for step in $STEPS; do
     fetch)    run_step "00 取源"        bash "$HERE/00-fetch-sources.sh" ;;
     sysroot)  run_step "05 sysroot"     bash "$HERE/gen-android-sysroot.sh" ;;
     libdrm)   run_step "10 libdrm"      bash "$HERE/10-build-libdrm.sh" ;;
+    nativeclc) run_step "15 native-clc" bash "$HERE/15-build-native-clc-tools.sh" ;;
     mesa)     run_step "20 mesa"        bash "$HERE/20-build-mesa.sh" ;;
     package)  run_step "30 打包"        bash "$HERE/30-package-prebuilts.sh" ;;
     verify)   run_step "40 校验"        bash "$HERE/40-verify-panthor.sh" ;;
-    *) die "未知步骤：$step（可用：fetch sysroot libdrm mesa package verify）" ;;
+    *) die "未知步骤：$step（可用：fetch sysroot libdrm nativeclc mesa package verify）" ;;
   esac
 done
 

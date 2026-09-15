@@ -59,14 +59,23 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install build tools (meson/ninja/mako/ccache)
+      - name: Install build tools + host CLC toolchain (LLVM18/clang18/SPIRV)
         run: |
           sudo apt-get update
+          # 交叉构建本体只需 ninja/pkg-config/mako/ccache。
+          # 另为【原生 CLC 工具阶段】(15-build-native-clc-tools.sh) 装 host 端
+          # LLVM18/clang18/SPIRV-Tools/LLVMSPIRVLib/libdrm —— 仅构建期把 libpan/*.cl
+          # 编成 SPIR-V→C/NIR，不进入 arm64 产物（目标驱动 -Dllvm=disabled，不链 LLVM）。
+          # 版本对齐：noble 默认 LLVM=18，libllvmspirvlib-18-dev 须与 LLVM 主.次一致。
           sudo apt-get install -y --no-install-recommends \
-            ninja-build pkg-config python3-mako python3-pip ccache unzip xz-utils
+            ninja-build pkg-config python3-mako python3-pip ccache unzip xz-utils \
+            llvm-18-dev libclang-18-dev libclang-cpp18-dev clang-18 \
+            libllvmspirvlib-18-dev spirv-tools libspirv-tools-dev libdrm-dev
           # ubuntu-24.04 apt 的 meson=1.3.2 < Mesa 26.3 要求(meson_version '>= 1.4.0')，改用 pip 装新版
           sudo pip3 install --break-system-packages --upgrade 'meson>=1.5'
           meson --version; ninja --version
+          llvm-config-18 --version; echo "has-rtti=$(llvm-config-18 --has-rtti)"
+          dpkg -l | grep -E 'libllvmspirvlib-18-dev|libspirv-tools-dev|libclang-cpp18-dev' || true
 
       - name: Locate NDK (runner 预装)
         run: |

@@ -38,7 +38,12 @@ SHIM_PC="$SHIM/lib/pkgconfig"
 CROSS_FILE="$SHIM/cross-android-${MESON_CPU_FAMILY}.ini"
 STAGE="$WORK/stage"             # meson install 的 DESTDIR 暂存
 OUT="$WORK/out"                 # 最终 device_redroid-prebuilts 布局
-mkdir -p "$SRC" "$SHIM_INCLUDE" "$SHIM_LIB" "$SHIM_PC" "$STAGE" "$OUT"
+# 原生(host x86_64)构建的 CLC 代码生成工具安装前缀（见 15-build-native-clc-tools.sh）：
+#   mesa_clc / vtn_bindgen2 / panfrost_compile —— 仅在【构建期】把 libpan/*.cl 编成
+#   SPIR-V→C/NIR 嵌进 arm64 驱动；交叉构建用 -Dmesa-clc=system 从这里的 bin 取用。
+NATIVE_TOOLS="$WORK/native-tools"
+NATIVE_TOOLS_BIN="$NATIVE_TOOLS/bin"
+mkdir -p "$SRC" "$SHIM_INCLUDE" "$SHIM_LIB" "$SHIM_PC" "$STAGE" "$OUT" "$NATIVE_TOOLS_BIN"
 
 # ---- 辅助函数 ---------------------------------------------------------------
 log()  { printf '\033[1;34m[android-mesa]\033[0m %s\n' "$*" >&2; }

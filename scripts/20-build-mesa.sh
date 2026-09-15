@@ -20,7 +20,13 @@
 #   * egl-lib-suffix/gles-lib-suffix=_mesa + glvnd=disabled
 #                                => Android 加载器按 ro.hardware.egl=mesa dlopen libEGL_mesa.so
 #                                   （meson.build:696 要求用 suffix 时必须关 glvnd）
-#   * llvm=disabled            => panfrost/panvk 不需要 LLVM（避免巨型依赖）
+#   * llvm=disabled            => arm64 目标驱动不链 LLVM（CLC 仅构建期代码生成，见下两条）
+#   * mesa-clc=system          => 用 15-build-native-clc-tools.sh 原生产出的 host 端 mesa_clc/
+#   * precomp-compiler=system     vtn_bindgen2/panfrost_compile 做构建期 libpan/*.cl 代码生成；
+#                                 meson 以 find_program(native:true) 从 PATH 取用，于是
+#                                 with_clc=false，上面的 -Dllvm=disabled 才成立。
+#                                 （Mesa 26.3 的 panfrost/panvk 在 with_driver_using_cl 里，
+#                                  不设 system 会强制 CLC→LLVM，见根 meson.build:1043-1064）
 #   * expat/xmlconfig=disabled => Android 上 xmlconfig 不可用（meson.build:1934）
 #   * libunwind=disabled       => meson.build:2246 对 android 有 .require(not with_platform_android)，
 #                                 即 android 上 libunwind 若启用会直接 error，故必须 disabled
@@ -49,6 +55,17 @@ MESA_SRC="${MESA_SRC_DIR:-$SRC/mesa}"
 
 # Mesa 构建期需要宿主 python + mako（pan_packers / vulkan entrypoints 代码生成）
 python3 -c 'import mako' 2>/dev/null || die "缺 python3-mako（Mesa 代码生成需要）：apt install python3-mako / pip install mako"
+
+# ---- Path A：复用 15-build-native-clc-tools.sh 原生产出的 CLC 代码生成工具 ----
+# 交叉构建用 -Dmesa-clc=system/-Dprecomp-compiler=system 时，meson 以
+# find_program(native:true) 从 PATH 找 mesa_clc/vtn_bindgen2/panfrost_compile。
+# 这三个是 host(x86_64) 工具，在构建期把 libpan/*.cl 编成 SPIR-V→C/NIR 嵌进 arm64 驱动。
+[ -d "$NATIVE_TOOLS_BIN" ] && export PATH="$NATIVE_TOOLS_BIN:$PATH"
+for t in mesa_clc vtn_bindgen2 panfrost_compile; do
+  command -v "$t" >/dev/null 2>&1 \
+    || die "缺原生工具 $t：先跑 scripts/15-build-native-clc-tools.sh（应装到 $NATIVE_TOOLS_BIN）"
+done
+log "原生 CLC 工具就位：$(command -v mesa_clc) / $(command -v vtn_bindgen2) / $(command -v panfrost_compile)"
 
 GALLIUM_DRIVERS="${GALLIUM_DRIVERS:-panfrost}"
 VULKAN_DRIVERS="${VULKAN_DRIVERS:-panfrost}"
@@ -89,6 +106,8 @@ meson setup "$BUILD" "$MESA_SRC" \
   -Degl-lib-suffix=_mesa \
   -Dgles-lib-suffix=_mesa \
   -Dllvm=disabled \
+  -Dmesa-clc=system \
+  -Dprecomp-compiler=system \
   -Dcpp_rtti=false \
   -Dglx=disabled \
   -Dexpat=disabled \
