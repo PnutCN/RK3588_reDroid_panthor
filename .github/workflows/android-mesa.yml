@@ -60,22 +60,44 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install build tools + host CLC toolchain (LLVM18/clang18/SPIRV)
+        env:
+          WORK: ${{ github.workspace }}/work
         run: |
-          sudo apt-get update
-          # 交叉构建本体只需 ninja/pkg-config/mako/ccache。
-          # 另为【原生 CLC 工具阶段】(15-build-native-clc-tools.sh) 装 host 端
-          # LLVM18/clang18/SPIRV-Tools/LLVMSPIRVLib/libdrm —— 仅构建期把 libpan/*.cl
-          # 编成 SPIR-V→C/NIR，不进入 arm64 产物（目标驱动 -Dllvm=disabled，不链 LLVM）。
-          # 版本对齐：noble 默认 LLVM=18，libllvmspirvlib-18-dev 须与 LLVM 主.次一致。
-          sudo apt-get install -y --no-install-recommends \
-            ninja-build pkg-config python3-mako python3-pip ccache unzip xz-utils \
-            llvm-18-dev libclang-18-dev libclang-cpp18-dev clang-18 \
-            libllvmspirvlib-18-dev spirv-tools libspirv-tools-dev libdrm-dev
-          # ubuntu-24.04 apt 的 meson=1.3.2 < Mesa 26.3 要求(meson_version '>= 1.4.0')，改用 pip 装新版
-          sudo pip3 install --break-system-packages --upgrade 'meson>=1.5'
-          meson --version; ninja --version
-          llvm-config-18 --version; echo "has-rtti=$(llvm-config-18 --has-rtti)"
-          dpkg -l | grep -E 'libllvmspirvlib-18-dev|libspirv-tools-dev|libclang-cpp18-dev' || true
+          set -o pipefail
+          mkdir -p "$WORK"
+          {
+            set -x
+            sudo apt-get update
+            # 交叉构建本体只需这些基础工具（run #4/#5 已验证可用）
+            sudo apt-get install -y --no-install-recommends \
+              ninja-build pkg-config python3-mako python3-pip ccache unzip xz-utils
+            set +x
+            # host CLC 工具链：逐包安装，单个失败不中断整步，最后统一诊断，
+            # 这样一次就能看清到底哪个包缺失/冲突（run #6 在此步 6s 内失败但无日志）。
+            LLC_PKGS="llvm-18-dev libclang-18-dev libclang-cpp18-dev clang-18 libllvmspirvlib-18-dev spirv-tools libspirv-tools-dev libdrm-dev"
+            FAILED=""
+            for p in $LLC_PKGS; do
+              if sudo apt-get install -y --no-install-recommends "$p"; then
+                echo "[apt] OK   $p"
+              else
+                echo "[apt] FAIL $p"; FAILED="$FAILED $p"
+              fi
+            done
+            if [ -n "$FAILED" ]; then
+              echo "===== host CLC 依赖安装失败：$FAILED ====="
+              for p in $FAILED; do echo "--- apt-cache policy $p ---"; apt-cache policy "$p" 2>&1 | head -8; done
+              echo "--- 启用的 apt 源 ---"; grep -rhE '^(deb|Types|URIs|Suites|Components)' /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null | head -30
+              exit 1
+            fi
+            set -x
+            # ubuntu-24.04 apt 的 meson=1.3.2 < Mesa 26.3 要求(meson_version '>= 1.4.0')，改用 pip 装新版
+            sudo pip3 install --break-system-packages --upgrade 'meson>=1.5'
+            meson --version; ninja --version
+            llvm-config-18 --version; echo "has-rtti=$(llvm-config-18 --has-rtti)"
+            # 确认关键 .pc 可达（native 阶段会自己补 PKG_CONFIG_PATH，这里仅探测）
+            PKG_CONFIG_PATH="/usr/lib/llvm-18/lib/pkgconfig:$PKG_CONFIG_PATH" pkg-config --modversion LLVMSPIRVLib || true
+            pkg-config --modversion SPIRV-Tools || true
+          } 2>&1 | tee "$WORK/toolchain.log"
 
       - name: Locate NDK (runner 预装)
         run: |
@@ -119,6 +141,7 @@ jobs:
           echo "===== PACKAGE-INFO ====="; cat "$WORK"/out/prebuilts/*/PACKAGE-INFO.txt 2>/dev/null || true
           echo "===== verify (tail) ====="; tail -40 "$WORK/verify-panthor.txt" 2>/dev/null || true
           echo "===== build.log (tail) ====="; tail -60 "$WORK/build.log" 2>/dev/null || true
+          echo "===== toolchain.log (tail) ====="; tail -40 "$WORK/toolchain.log" 2>/dev/null || true
 
       - name: Upload artifacts
         if: always()
@@ -129,6 +152,7 @@ jobs:
             ${{ github.workspace }}/work/out/prebuilts/**
             ${{ github.workspace }}/work/verify-panthor.txt
             ${{ github.workspace }}/work/build.log
+            ${{ github.workspace }}/work/toolchain.log
           if-no-files-found: warn
           retention-days: 30
 
@@ -156,6 +180,7 @@ jobs:
             - Commit: `${{ github.sha }}`
             - `verify-panthor.txt`: readelf/strings 校验（含 panthor KMD、arm64 ABI、NEEDED 洁净）
             - `build.log`: 完整构建日志（失败时也在）
+            - `toolchain.log`: host CLC 工具链安装/版本日志（apt 逐包结果、LLVM/SPIRV 版本）
             - `android-mesa-panthor-prebuilts.tar.gz`: device_redroid-prebuilts 布局的 .so（成功时）
           draft: false
           prerelease: true
@@ -164,3 +189,4 @@ jobs:
             ${{ github.workspace }}/work/android-mesa-panthor-prebuilts.tar.gz
             ${{ github.workspace }}/work/verify-panthor.txt
             ${{ github.workspace }}/work/build.log
+            ${{ github.workspace }}/work/toolchain.log
