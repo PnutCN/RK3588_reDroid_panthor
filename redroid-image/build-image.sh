@@ -96,11 +96,11 @@ fi
 if [ -n "$llvm_consumers" ]; then
   log "INFO: base 中这些非-Mesa 库仍 DT_NEED libLLVM（故无论如何都不应移除 LLVM）:$llvm_consumers"
 fi
+REMOVE_LLVM_APPLY=0
 if [ "${REMOVE_LLVM:-0}" = "1" ] && [ -z "$llvm_consumers" ]; then
-  REMOVE_LLVM_CMD='RUN rm -f /vendor/lib64/libLLVM*.so* && echo "[image] removed orphan libLLVM*"'
+  REMOVE_LLVM_APPLY=1
   log "REMOVE_LLVM=1 且无其它消费者 -> 构建时移除孤儿 libLLVM（需镜像内有 /bin/sh）"
 else
-  REMOVE_LLVM_CMD='# COPY-only（未移除孤儿 libLLVM；我们的 Mesa 栈 LLVM-free，孤儿库无害）'
   log "默认 COPY-only：不移除孤儿 libLLVM（REMOVE_LLVM=${REMOVE_LLVM:-0}）"
 fi
 
@@ -109,11 +109,15 @@ CTX="$WORK/ctx"; rm -rf "$CTX"; mkdir -p "$CTX"
 bash "$HERE/inject-mesa.sh" "$ARM64" "$CTX/overlay" "$GPU_CONFIG"
 
 # --- 5) 渲染 Dockerfile ------------------------------------------------------
-sed -e "s#@BASE_IMAGE@#$BASE_IMAGE#g" \
-    -e "s#@REMOVE_LLVM_CMD@#$REMOVE_LLVM_CMD#g" \
-    "$HERE/Dockerfile.tmpl" > "$CTX/Dockerfile"
-log "Dockerfile:"; sed 's/^/    | /' "$CTX/Dockerfile"
-grep -q '@[A-Z_]*@' "$CTX/Dockerfile" && die "Dockerfile 仍有未替换占位符"
+# 只用 sed 替换 BASE_IMAGE（docker 镜像引用不含 '|'，故 '|' 作分隔符安全）；
+# REMOVE_LLVM 用条件追加一行 RUN 实现，避免把含特殊字符（#、/）的命令塞进 sed 表达式。
+DOCKERFILE="$CTX/Dockerfile"
+sed -e "s|@BASE_IMAGE@|$BASE_IMAGE|g" "$HERE/Dockerfile.tmpl" > "$DOCKERFILE"
+if [ "$REMOVE_LLVM_APPLY" = "1" ]; then
+  printf 'RUN rm -f /vendor/lib64/libLLVM*.so*\n' >> "$DOCKERFILE"
+fi
+log "Dockerfile:"; sed 's/^/    | /' "$DOCKERFILE"
+grep -q '@[A-Z_]*@' "$DOCKERFILE" && die "Dockerfile 仍有未替换占位符"
 
 # --- 6) docker build ---------------------------------------------------------
 log "docker build -> $OUT_IMAGE"
