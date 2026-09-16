@@ -80,6 +80,7 @@ copy_libs "$STAGE_LIB" 'libvulkan_panfrost.so*' "$DST/lib/hw"
 
 # ---- GBM / glapi -> lib/ ----
 log "  GBM/glapi -> lib/"
+copy_libs "$STAGE_LIB/gbm" 'dri_gbm.so' "$DST/lib/gbm"   # NiuPhone: libgbm(>=25) 是薄壳，dlopen /vendor/lib64/gbm/dri_gbm.so；没有它 gralloc.gbm 起不来（rk3588 实测）
 copy_libs "$STAGE_LIB" 'libgbm*.so*'   "$DST/lib"   # android(SDK>=30) 名为 libgbm_mesa.so.1.0.0
 copy_libs "$STAGE_LIB" 'libglapi.so*'  "$DST/lib"   # glapi 通常并入 libgallium_dri，无独立 .so 时为空，无妨
 
