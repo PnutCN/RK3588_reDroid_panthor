@@ -70,8 +70,13 @@ jobs:
             sudo apt-get update
             # 交叉构建本体只需这些基础工具（run #4/#5 已验证可用）
             # cmake/git：供 15-build-native-clc-tools.sh 从源码构建 SPIRV-Tools 用
+            # glslang-tools：turnip（freedreno 的 Vulkan）要 glslangValidator 编内置
+            # 着色器。panfrost 那一路不需要，所以加 Adreno 支持之前这里没有它 ——
+            # run 35222257668 因此在 meson 配置阶段就退出：
+            #   mesa/meson.build:747 ERROR: Program 'glslangValidator' not found
             sudo apt-get install -y --no-install-recommends \
-              ninja-build pkg-config python3-mako python3-pip ccache unzip xz-utils cmake git
+              ninja-build pkg-config python3-mako python3-pip ccache unzip xz-utils cmake git \
+              glslang-tools
             set +x
             # host CLC 工具链：逐包安装，单个失败不中断整步，最后统一诊断，
             # 这样一次就能看清到底哪个包缺失/冲突（run #6 在此步 6s 内失败但无日志）。
