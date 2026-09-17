@@ -86,7 +86,21 @@ log "配置 Mesa 交叉构建 -> $BUILD"
 log "  gallium-drivers=$GALLIUM_DRIVERS  vulkan-drivers=$VULKAN_DRIVERS  android-stub=$ANDROID_STUB_OPT"
 rm -rf "$BUILD"
 
+# --wrap-mode=nofallback：**不给缺失的依赖下载 subproject**。
+#
+# 加 freedreno 支持时撞到的：Mesa 的 src/freedreno/meson.build 里
+#   dep_libarchive = dependency('libarchive', allow_fallback: true,
+#                               required: false, disabler: true)
+# —— 它本身是可选的（找不到就把 crashdec/cffdump 这些 decode 工具关掉），
+# 但 allow_fallback 会让 meson 先去下 libarchive 3.7.2 的源码，而那份源码
+# 交叉编译到 Android 时挂在 `archive.h:101 'android_lf.h' file not found`
+# （run 35223325269，编到 689/1580 才炸）。
+#
+# 禁掉 fallback 之后它老老实实报 not found，disabler 生效，驱动照编。
+# libdrm 不受影响 —— 这条流水线是 10-build-libdrm.sh 自己编好再喂进来的，
+# 本来就不靠 fallback。
 meson setup "$BUILD" "$MESA_SRC" \
+  --wrap-mode=nofallback \
   --cross-file="$CROSS_FILE" \
   --prefix="$PREFIX" \
   --libdir="$LIBDIR" \
