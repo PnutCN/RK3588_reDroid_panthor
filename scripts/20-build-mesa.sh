@@ -153,7 +153,14 @@ expect_found "$STAGE"     'libgallium_dri.so' "gallium megadriver 未构建"
 expect_found "$STAGE_LIB" 'libgbm*.so*'       "GBM 未构建（android 名应为 libgbm_mesa.so*）"
 ls "$STAGE_LIB"/libEGL_mesa.so*        >/dev/null 2>&1 || die "缺 libEGL_mesa.so（egl-lib-suffix 未生效？）"
 ls "$STAGE_LIB"/libGLESv2_mesa.so*     >/dev/null 2>&1 || die "缺 libGLESv2_mesa.so"
-ls "$STAGE_LIB"/libvulkan_panfrost.so* >/dev/null 2>&1 || die "缺 libvulkan_panfrost.so（PanVK 未构建？）"
+# **按 $VULKAN_DRIVERS 查，不要写死 panfrost**：这条流水线加 freedreno（turnip）
+# 支持之后，产物叫 libvulkan_freedreno.so，而写死的检查会在 Mesa 编完
+# 1387/1387 之后才报「缺 libvulkan_panfrost.so（PanVK 未构建？）」——
+# 那句话指向 PanVK，而实际上根本没让它编 PanVK（run 35224443431）。
+for _vk in ${VULKAN_DRIVERS//,/ }; do
+  ls "$STAGE_LIB"/libvulkan_${_vk}.so* >/dev/null 2>&1 \
+    || die "缺 libvulkan_${_vk}.so（vulkan-drivers=$VULKAN_DRIVERS，这一项没构建？）"
+done
 
 log "Mesa 构建完成。产物根：$STAGE_LIB"
 log "下一步：scripts/30-package-prebuilts.sh（落位 device_redroid-prebuilts 布局）"

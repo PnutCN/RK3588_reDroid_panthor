@@ -35,6 +35,10 @@ rm -rf "$DST"
 mkdir -p "$DST/lib/egl" "$DST/lib/dri" "$DST/lib/hw" "$DST/share/vulkan/icd.d"
 
 STRIP="${STRIP:-0}"
+# 驱动清单从环境来（CI 的 workflow 里已经 export 了），默认值保持这条流水线
+# 原本的行为 —— 它诞生时只有 panfrost 一种。
+GALLIUM_DRIVERS="${GALLIUM_DRIVERS:-panfrost}"
+VULKAN_DRIVERS="${VULKAN_DRIVERS:-panfrost}"
 maybe_strip() { [ "$STRIP" = "1" ] && "$NDK_BIN/llvm-strip" --strip-unneeded "$1" 2>/dev/null || true; }
 
 # 复制一个（可能带版本后缀/软链的）库族到目标目录，保留软链关系
@@ -71,12 +75,20 @@ if [ -n "$GALLIUM_DRI_SRC" ]; then
 else
   log "  警告：未找到 libgallium_dri.so（gallium 驱动未构建？）"
 fi
-# 兜底：确保 panfrost_dri.so 软链存在（device_redroid-prebuilts 的 Android.mk 靠 find -type l 识别驱动）
-[ -e "$DST/lib/dri/panfrost_dri.so" ] || ln -sf libgallium_dri.so "$DST/lib/dri/panfrost_dri.so"
+# 兜底：确保每个 gallium 驱动的 <drv>_dri.so 软链存在
+# （device_redroid-prebuilts 的 Android.mk 靠 find -type l 识别驱动）。
+# **按 $GALLIUM_DRIVERS 遍历，不写死 panfrost** —— 加 freedreno 之后
+# 写死那一行会造出一个指向 Adreno 驱动的 panfrost 软链，而那比没有更糟。
+for _gl in ${GALLIUM_DRIVERS//,/ }; do
+  [ -e "$DST/lib/dri/${_gl}_dri.so" ] || ln -sf libgallium_dri.so "$DST/lib/dri/${_gl}_dri.so"
+done
 
-# ---- PanVK -> lib/hw/libvulkan_panfrost.so ----
-log "  PanVK -> lib/hw/"
-copy_libs "$STAGE_LIB" 'libvulkan_panfrost.so*' "$DST/lib/hw"
+# ---- Vulkan 驱动 -> lib/hw/libvulkan_<drv>.so ----
+# 同上按 $VULKAN_DRIVERS 遍历：turnip 的产物叫 libvulkan_freedreno.so。
+log "  Vulkan 驱动 -> lib/hw/"
+for _vk in ${VULKAN_DRIVERS//,/ }; do
+  copy_libs "$STAGE_LIB" "libvulkan_${_vk}.so*" "$DST/lib/hw"
+done
 
 # ---- GBM / glapi -> lib/ ----
 log "  GBM/glapi -> lib/"
