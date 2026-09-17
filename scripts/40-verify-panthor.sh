@@ -26,6 +26,29 @@ need strings
 DST="${1:-$OUT/$PREBUILT_LAYOUT_ARM64}"
 [ -d "$DST" ] || die "产物目录不存在：$DST（先跑 30-package-prebuilts.sh）"
 
+# **这个脚本只验 Panthor 那一路。**
+#
+# 它整套判据都是 panfrost/panvk 特有的（产物名 libvulkan_panfrost.so、
+# panfrost_dri.so 软链、驱动二进制里要有独立的 "panthor" 字符串防止只编进
+# 旧 KMD）。加 freedreno 支持之后拿它去验 Adreno，报出来的是
+# 「缺 panfrost_dri.so 软链」—— 听着像产物坏了，其实是**拿错了尺子**
+# （run 35228529078，Mesa 本身 1387/1387 编完了）。
+#
+# 所以不是 panfrost 就明确跳过，并且**说出来**：一个静默跳过的校验，
+# 和一个跑过并通过的校验，在 CI 日志里长得一模一样。
+VULKAN_DRIVERS="${VULKAN_DRIVERS:-panfrost}"
+case ",${VULKAN_DRIVERS}," in
+  *,panfrost,*) ;;
+  *)
+    echo "== 40-verify-panthor：跳过 =="
+    echo "   这套判据是 Panthor 专用的，而这次编的是 vulkan-drivers=${VULKAN_DRIVERS}。"
+    echo "   ⚠️ 也就是说**这一轮产物没有经过任何驱动级校验** ——"
+    echo "      要验 Adreno 得另写一份（turnip 的对应判据：libvulkan_freedreno.so、"
+    echo "      freedreno_dri.so 软链、二进制里有 fd6/fd7 的 chip id 表）。"
+    exit 0
+    ;;
+esac
+
 PASS=0; FAIL=0; WARN=0
 ok()   { PASS=$((PASS+1)); printf '  \033[1;32mPASS\033[0m %s\n' "$*"; }
 bad()  { FAIL=$((FAIL+1)); printf '  \033[1;31mFAIL\033[0m %s\n' "$*"; }
